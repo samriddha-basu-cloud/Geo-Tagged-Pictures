@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>GeoTag Cam Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --accent: #00E5FF;
+    --accent2: #FF6B35;
+    --bg: #0A0C0F;
+    --bg2: #111318;
+    --bg3: #1A1D24;
+    --text: #E8EAED;
+    --text2: #9AA0A6;
+    --border: rgba(255,255,255,0.08);
+    --overlay: rgba(10,12,15,0.85);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--text); font-family:'Rajdhani',sans-serif; overflow:hidden; height:100dvh; width:100vw; user-select:none; }
+
+  #app { width:100%; height:100dvh; display:flex; flex-direction:column; position:relative; overflow:hidden; }
+
+  /* VIEWFINDER */
+  #viewfinder { position:relative; flex:1; overflow:hidden; background:#000; }
+  #video { width:100%; height:100%; object-fit:cover; display:block; transform-origin:center; transition:transform 0.1s; }
+  #canvas { display:none; }
+
+  /* GRID OVERLAY */
+  #grid { position:absolute; inset:0; pointer-events:none; opacity:0.3; }
+  .grid-line { position:absolute; background:rgba(255,255,255,0.4); }
+  .grid-h { width:100%; height:0.5px; }
+  .grid-v { height:100%; width:0.5px; }
+
+  /* FOCUS RING */
+  #focusRing { position:absolute; width:70px; height:70px; border:2px solid var(--accent); border-radius:4px; pointer-events:none; display:none; transform:translate(-50%,-50%); transition:all 0.15s; }
+  #focusRing::before, #focusRing::after {
+    content:''; position:absolute; background:var(--accent);
+  }
+  #focusRing::before { width:10px; height:2px; top:-2px; left:50%; transform:translateX(-50%); }
+  #focusRing::after { width:2px; height:10px; left:-2px; top:50%; transform:translateY(-50%); }
+  #focusRing.locked { border-color:#FFD600; animation:focusPulse 0.3s ease; }
+  @keyframes focusPulse { 0%{transform:translate(-50%,-50%) scale(1.4)} 100%{transform:translate(-50%,-50%) scale(1)} }
+
+  /* GEO OVERLAY ON VIEWFINDER */
+  #geoPreview { position:absolute; bottom:0; left:0; right:0; padding:10px 14px 14px; background:linear-gradient(transparent, rgba(0,0,0,0.85)); pointer-events:none; }
+  #geoBlock { display:flex; gap:10px; align-items:flex-start; }
+  #miniMap { width:72px; height:72px; border-radius:6px; border:1.5px solid rgba(255,255,255,0.3); overflow:hidden; flex-shrink:0; background:#1a2a1a; }
+  #miniMap img { width:100%; height:100%; object-fit:cover; }
+  #geoText { flex:1; }
+  #geoCity { font-size:17px; font-weight:700; color:#fff; line-height:1.2; letter-spacing:0.5px; }
+  #geoAddr { font-size:11px; color:rgba(255,255,255,0.75); margin-top:2px; line-height:1.4; font-family:'JetBrains Mono',monospace; }
+  #geoCoords { font-size:10.5px; color:var(--accent); margin-top:4px; font-family:'JetBrains Mono',monospace; }
+  #geoTime { font-size:10px; color:rgba(255,255,255,0.55); margin-top:2px; font-family:'JetBrains Mono',monospace; }
+  #geoFlag { font-size:14px; display:inline; }
+
+  /* GPS STATUS */
+  #gpsStatus { position:absolute; top:14px; right:14px; display:flex; align-items:center; gap:6px; background:var(--overlay); padding:5px 10px; border-radius:20px; border:0.5px solid var(--border); }
+  #gpsDot { width:8px; height:8px; border-radius:50%; background:#666; transition:background 0.3s; }
+  #gpsDot.searching { background:#FFD600; animation:blink 1s infinite; }
+  #gpsDot.fixed { background:#00E676; }
+  #gpsLabel { font-size:11px; color:var(--text2); font-family:'JetBrains Mono',monospace; }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* MODE BADGE */
+  #modeBadge { position:absolute; top:14px; left:14px; background:var(--overlay); padding:5px 12px; border-radius:20px; border:0.5px solid var(--border); font-size:12px; font-weight:600; letter-spacing:1px; color:var(--accent); }
+
+  /* REC INDICATOR */
+  #recIndicator { position:absolute; top:14px; left:50%; transform:translateX(-50%); background:rgba(229,57,53,0.9); padding:4px 14px; border-radius:20px; display:none; align-items:center; gap:6px; }
+  #recDot { width:8px; height:8px; border-radius:50%; background:#fff; animation:blink 0.8s infinite; }
+  #recTime { font-size:13px; font-weight:600; color:#fff; font-family:'JetBrains Mono',monospace; letter-spacing:1px; }
+
+  /* ZOOM INDICATOR */
+  #zoomIndicator { position:absolute; top:60px; left:50%; transform:translateX(-50%); background:var(--overlay); padding:4px 12px; border-radius:12px; font-size:13px; font-family:'JetBrains Mono',monospace; color:var(--accent); opacity:0; transition:opacity 0.3s; pointer-events:none; }
+  #zoomIndicator.show { opacity:1; }
+
+  /* CONTROLS PANEL */
+  #controls { background:var(--bg2); padding:10px 16px 0; border-top:0.5px solid var(--border); }
+
+  /* SLIDERS */
+  #sliders { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:8px; }
+  .slider-group { display:flex; flex-direction:column; gap:3px; }
+  .slider-label { font-size:10px; color:var(--text2); letter-spacing:0.8px; text-transform:uppercase; display:flex; justify-content:space-between; }
+  .slider-label span { color:var(--accent); font-family:'JetBrains Mono',monospace; }
+  input[type=range] { -webkit-appearance:none; width:100%; height:3px; border-radius:2px; background:var(--bg3); outline:none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:var(--accent); cursor:pointer; border:2px solid var(--bg2); }
+  input[type=range].orange::-webkit-slider-thumb { background:var(--accent2); }
+  input[type=range].yellow::-webkit-slider-thumb { background:#FFD600; }
+
+  /* ZOOM TRACK */
+  #zoomTrack { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:0 2px; }
+  #zoomTrack span { font-size:10px; color:var(--text2); }
+  #zoomSlider { flex:1; }
+  #zoomVal { font-size:11px; font-family:'JetBrains Mono',monospace; color:var(--accent); min-width:32px; text-align:right; }
+
+  /* ZOOM BUTTONS */
+  #zoomBtns { display:flex; gap:6px; justify-content:center; margin-bottom:8px; }
+  .zoom-btn { background:var(--bg3); border:0.5px solid var(--border); color:var(--text); font-family:'Rajdhani',sans-serif; font-size:12px; font-weight:600; padding:5px 12px; border-radius:20px; cursor:pointer; transition:all 0.15s; }
+  .zoom-btn.active, .zoom-btn:active { background:var(--accent); color:#000; }
+
+  /* BOTTOM BAR */
+  #bottomBar { display:flex; align-items:center; justify-content:space-between; padding:12px 24px 18px; background:var(--bg2); gap:16px; }
+  #gallery { width:56px; height:56px; border-radius:10px; overflow:hidden; background:var(--bg3); border:1.5px solid var(--border); cursor:pointer; position:relative; display:flex; align-items:center; justify-content:center; }
+  #gallery img { width:100%; height:100%; object-fit:cover; }
+  #galleryCount { position:absolute; top:3px; right:3px; background:var(--accent); color:#000; font-size:9px; font-weight:700; border-radius:10px; padding:1px 5px; display:none; }
+  #shutterWrap { position:relative; display:flex; align-items:center; justify-content:center; }
+  #shutter { width:74px; height:74px; border-radius:50%; border:3px solid #fff; background:transparent; cursor:pointer; position:relative; transition:transform 0.1s; display:flex; align-items:center; justify-content:center; }
+  #shutter:active { transform:scale(0.93); }
+  #shutterInner { width:58px; height:58px; border-radius:50%; background:#fff; transition:all 0.1s; }
+  #shutter.video #shutterInner { border-radius:8px; background:#E53935; width:32px; height:32px; }
+  #shutter.recording { border-color:#E53935; }
+  #shutter.recording #shutterInner { background:#E53935; border-radius:50%; width:28px; height:28px; }
+
+  #sideControls { display:flex; flex-direction:column; gap:10px; align-items:center; width:56px; }
+  .ctrl-btn { width:44px; height:44px; border-radius:50%; background:var(--bg3); border:0.5px solid var(--border); color:var(--text); font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; }
+  .ctrl-btn:active { transform:scale(0.9); }
+  .ctrl-btn.active { background:rgba(0,229,255,0.15); border-color:var(--accent); }
+
+  /* MODE TABS */
+  #modeTabs { display:flex; justify-content:center; gap:4px; padding:8px 16px; background:var(--bg2); }
+  .mode-tab { flex:1; max-width:80px; padding:6px 8px; border-radius:20px; border:0.5px solid transparent; background:transparent; color:var(--text2); font-family:'Rajdhani',sans-serif; font-size:12px; font-weight:600; letter-spacing:0.5px; cursor:pointer; text-align:center; transition:all 0.15s; }
+  .mode-tab.active { background:var(--bg3); border-color:var(--border); color:var(--accent); }
+
+  /* PANEL */
+  #panel { position:absolute; top:0; right:0; bottom:0; width:260px; background:var(--bg2); border-left:0.5px solid var(--border); transform:translateX(100%); transition:transform 0.3s cubic-bezier(0.4,0,0.2,1); z-index:50; overflow-y:auto; padding:16px; }
+  #panel.open { transform:translateX(0); }
+  .panel-title { font-size:14px; font-weight:700; letter-spacing:1px; color:var(--accent); margin-bottom:12px; text-transform:uppercase; }
+  .panel-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:0.5px solid var(--border); }
+  .panel-label { font-size:13px; color:var(--text2); }
+  .toggle { width:40px; height:22px; border-radius:11px; background:var(--bg3); position:relative; cursor:pointer; transition:background 0.2s; }
+  .toggle.on { background:var(--accent); }
+  .toggle::after { content:''; position:absolute; width:18px; height:18px; border-radius:50%; background:#fff; top:2px; left:2px; transition:left 0.2s; }
+  .toggle.on::after { left:20px; }
+  select.panel-select { background:var(--bg3); border:0.5px solid var(--border); color:var(--text); font-family:'Rajdhani',sans-serif; font-size:13px; padding:4px 8px; border-radius:6px; }
+
+  /* GALLERY MODAL */
+  #galleryModal { position:fixed; inset:0; background:rgba(0,0,0,0.95); z-index:100; display:none; flex-direction:column; }
+  #galleryModal.open { display:flex; }
+  #galleryHeader { padding:16px; display:flex; align-items:center; justify-content:space-between; border-bottom:0.5px solid var(--border); }
+  #galleryGrid { flex:1; overflow-y:auto; padding:12px; display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
+  .gallery-item { aspect-ratio:1; overflow:hidden; border-radius:4px; position:relative; cursor:pointer; }
+  .gallery-item img, .gallery-item video { width:100%; height:100%; object-fit:cover; }
+  .gallery-item .vid-badge { position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,0.7); border-radius:3px; padding:1px 4px; font-size:9px; color:#fff; font-family:'JetBrains Mono',monospace; }
+  #galleryClose { background:transparent; border:none; color:var(--text); font-size:24px; cursor:pointer; }
+
+  /* LIGHTBOX */
+  #lightbox { position:fixed; inset:0; background:#000; z-index:200; display:none; flex-direction:column; }
+  #lightbox.open { display:flex; }
+  #lbContent { flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  #lbImg { max-width:100%; max-height:100%; object-fit:contain; }
+  #lbVideo { max-width:100%; max-height:100%; }
+  #lbBar { padding:12px 16px; display:flex; gap:10px; justify-content:flex-end; background:rgba(0,0,0,0.7); }
+  .lb-btn { background:var(--bg3); border:0.5px solid var(--border); color:var(--text); font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:600; padding:8px 16px; border-radius:8px; cursor:pointer; }
+  .lb-btn.primary { background:var(--accent); color:#000; border:none; }
+
+  /* FLASH */
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity 0.05s; z-index:20; }
+
+  /* PERMISSION SCREEN */
+  #permScreen { position:fixed; inset:0; background:var(--bg); z-index:1000; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; text-align:center; }
+  #permScreen.hidden { display:none; }
+  .perm-icon { font-size:64px; margin-bottom:24px; }
+  .perm-title { font-size:28px; font-weight:700; color:var(--accent); margin-bottom:8px; }
+  .perm-sub { font-size:15px; color:var(--text2); margin-bottom:32px; line-height:1.6; }
+  .perm-btn { background:var(--accent); color:#000; border:none; font-family:'Rajdhani',sans-serif; font-size:16px; font-weight:700; padding:14px 40px; border-radius:30px; cursor:pointer; letter-spacing:0.5px; }
+
+  /* TOAST */
+  #toast { position:fixed; bottom:160px; left:50%; transform:translateX(-50%); background:var(--bg3); border:0.5px solid var(--border); color:var(--text); font-size:13px; font-weight:500; padding:8px 20px; border-radius:20px; opacity:0; transition:opacity 0.3s; pointer-events:none; z-index:300; white-space:nowrap; }
+  #toast.show { opacity:1; }
+
+  /* PINCH HINT */
+  #pinchHint { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:#fff; font-size:13px; padding:8px 16px; border-radius:20px; opacity:0; pointer-events:none; transition:opacity 0.3s; }
+  #pinchHint.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<div id="permScreen">
+  <div class="perm-icon">📍</div>
+  <div class="perm-title">GeoTag Cam Pro</div>
+  <div class="perm-sub">Professional geo-tagged photo &amp; video capture.<br>Requires camera, microphone, and location access.</div>
+  <button class="perm-btn" onclick="requestPermissions()">Allow &amp; Start</button>
+</div>
+
+<div id="app" style="display:none">
+  <div id="viewfinder">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+
+    <div id="grid">
+      <div class="grid-line grid-h" style="top:33.33%"></div>
+      <div class="grid-line grid-h" style="top:66.66%"></div>
+      <div class="grid-line grid-v" style="left:33.33%"></div>
+      <div class="grid-line grid-v" style="left:66.66%"></div>
+    </div>
+
+    <div id="focusRing"></div>
+    <div id="flash"></div>
+    <div id="pinchHint">Pinch to zoom</div>
+
+    <div id="geoPreview">
+      <div id="geoBlock">
+        <div id="miniMap"><img id="mapImg" src="" alt="map"></div>
+        <div id="geoText">
+          <div id="geoCity">Locating… <span id="geoFlag"></span></div>
+          <div id="geoAddr">Fetching address…</div>
+          <div id="geoCoords">Lat —  Long —</div>
+          <div id="geoTime" id="geoTime">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="gpsStatus"><div id="gpsDot" class="searching"></div><span id="gpsLabel">GPS</span></div>
+    <div id="modeBadge">PHOTO</div>
+    <div id="recIndicator"><div id="recDot"></div><span id="recTime">00:00</span></div>
+    <div id="zoomIndicator">1.0×</div>
+  </div>
+
+  <div id="modeTabs">
+    <button class="mode-tab active" onclick="setMode('photo')">PHOTO</button>
+    <button class="mode-tab" onclick="setMode('video')">VIDEO</button>
+    <button class="mode-tab" onclick="setMode('burst')">BURST</button>
+    <button class="mode-tab" onclick="setMode('timer')">TIMER</button>
+  </div>
+
+  <div id="controls">
+    <div id="sliders">
+      <div class="slider-group">
+        <div class="slider-label">Zoom <span id="zoomLbl">1.0×</span></div>
+        <input type="range" id="zoomRange" min="1" max="5" step="0.1" value="1" oninput="onZoomSlider(this.value)">
+      </div>
+      <div class="slider-group">
+        <div class="slider-label">Bright <span id="brightLbl">0</span></div>
+        <input type="range" class="orange" id="brightRange" min="-2" max="2" step="0.1" value="0" oninput="onBright(this.value)">
+      </div>
+      <div class="slider-group">
+        <div class="slider-label">Contrast <span id="contrastLbl">1.0</span></div>
+        <input type="range" class="yellow" id="contrastRange" min="0.5" max="2" step="0.1" value="1" oninput="onContrast(this.value)">
+      </div>
+    </div>
+    <div id="zoomBtns">
+      <button class="zoom-btn active" onclick="setZoomQuick(1)">1×</button>
+      <button class="zoom-btn" onclick="setZoomQuick(2)">2×</button>
+      <button class="zoom-btn" onclick="setZoomQuick(3)">3×</button>
+      <button class="zoom-btn" onclick="setZoomQuick(5)">5×</button>
+    </div>
+  </div>
+
+  <div id="bottomBar">
+    <div id="gallery" onclick="openGallery()">
+      <img id="galleryThumb" src="" style="display:none">
+      <span id="galleryEmpty" style="font-size:22px;color:var(--text2)">🖼</span>
+      <span id="galleryCount"></span>
+    </div>
+    <div id="shutterWrap">
+      <div id="shutter" onclick="captureAction()">
+        <div id="shutterInner"></div>
+      </div>
+    </div>
+    <div id="sideControls">
+      <button class="ctrl-btn" id="flipBtn" onclick="flipCamera()" title="Flip">🔄</button>
+      <button class="ctrl-btn" id="settingsBtn" onclick="togglePanel()" title="Settings">⚙️</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS PANEL -->
+<div id="panel">
+  <div class="panel-title">Settings</div>
+  <div class="panel-row"><span class="panel-label">Grid overlay</span><div class="toggle on" id="tGrid" onclick="toggleGrid()"></div></div>
+  <div class="panel-row"><span class="panel-label">Geo watermark</span><div class="toggle on" id="tGeo" onclick="toggleGeo()"></div></div>
+  <div class="panel-row"><span class="panel-label">GPS coordinates</span><div class="toggle on" id="tCoords" onclick="toggleCoords()"></div></div>
+  <div class="panel-row"><span class="panel-label">Mini map</span><div class="toggle on" id="tMap" onclick="toggleMap()"></div></div>
+  <div class="panel-row"><span class="panel-label">Shutter sound</span><div class="toggle" id="tSound" onclick="toggleSound()"></div></div>
+  <div class="panel-row"><span class="panel-label">Save location</span><div class="toggle on" id="tSaveGeo" onclick="toggleSaveGeo()"></div></div>
+  <div class="panel-row"><span class="panel-label">Resolution</span>
+    <select class="panel-select" id="resSelect" onchange="changeRes(this.value)">
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+    </select>
+  </div>
+  <div class="panel-row"><span class="panel-label">Timer delay</span>
+    <select class="panel-select" id="timerSelect">
+      <option value="3">3s</option>
+      <option value="5">5s</option>
+      <option value="10">10s</option>
+    </select>
+  </div>
+  <div class="panel-row"><span class="panel-label">Video quality</span>
+    <select class="panel-select" id="vidQual">
+      <option value="1080">1080p</option>
+      <option value="720">720p</option>
+      <option value="480">480p</option>
+    </select>
+  </div>
+  <div style="margin-top:16px;">
+    <button onclick="togglePanel()" style="width:100%;background:var(--bg3);border:0.5px solid var(--border);color:var(--text);font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;padding:10px;border-radius:8px;cursor:pointer;">Close</button>
+  </div>
+</div>
+
+<!-- GALLERY MODAL -->
+<div id="galleryModal">
+  <div id="galleryHeader">
+    <span style="font-size:16px;font-weight:700;color:var(--accent)">GALLERY</span>
+    <button id="galleryClose" onclick="closeGallery()">✕</button>
+  </div>
+  <div id="galleryGrid"></div>
+</div>
+
+<!-- LIGHTBOX -->
+<div id="lightbox">
+  <div id="lbContent">
+    <img id="lbImg" src="" style="display:none">
+    <video id="lbVideo" controls style="display:none"></video>
+  </div>
+  <div id="lbBar">
+    <button class="lb-btn" onclick="closeLightbox()">Back</button>
+    <button class="lb-btn" onclick="deleteItem()">Delete</button>
+    <button class="lb-btn primary" onclick="downloadItem()">Download</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let stream = null;
+let facingMode = 'environment';
+let currentZoom = 1;
+let maxZoom = 5;
+let brightness = 0;
+let contrast = 1;
+let geoData = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let recInterval = null;
+let recSeconds = 0;
+let captureMode = 'photo';
+let timerTimeout = null;
+let timerCountdown = null;
+let captured = [];
+let activeIndex = -1;
+let settings = { grid:true, geo:true, coords:true, map:true, sound:false, saveGeo:true };
+let pinchDist0 = null, pinchZoom0 = 1;
+let clockInterval = null;
+let mapZoom = 15;
+
+async function requestPermissions() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+    s.getTracks().forEach(t => t.stop());
+    document.getElementById('permScreen').classList.add('hidden');
+    document.getElementById('app').style.display = 'flex';
+    await startCamera();
+    startGPS();
+    startClock();
+  } catch(e) {
+    alert('Camera/Mic access denied. Please allow in browser settings.');
+  }
+}
+
+async function startCamera(keepZoom) {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const res = document.getElementById('resSelect').value;
+  const constraints = {
+    video: {
+      facingMode,
+      width: res==='low'?640:res==='medium'?1280:1920,
+      height: res==='low'?480:res==='medium'?720:1080
+    },
+    audio: false
+  };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    video.play();
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities?.() || {};
+    maxZoom = caps.zoom?.max || 5;
+    if (!keepZoom) {
+      currentZoom = 1;
+      document.getElementById('zoomRange').value = 1;
+      document.getElementById('zoomLbl').textContent = '1.0×';
+    }
+    applyZoom(currentZoom);
+    applyFilters();
+  } catch(e) { toast('Camera error: '+e.message); }
+}
+
+function flipCamera() {
+  facingMode = facingMode==='environment'?'user':'environment';
+  startCamera(true);
+  toast(facingMode==='user'?'Front camera':'Rear camera');
+}
+
+function applyZoom(z) {
+  currentZoom = Math.min(Math.max(1, z), maxZoom);
+  const track = stream?.getVideoTracks()[0];
+  if (track?.applyConstraints) {
+    const caps = track.getCapabilities?.() || {};
+    if (caps.zoom) {
+      track.applyConstraints({ advanced:[{ zoom: currentZoom }] });
+    } else {
+      video.style.transform = `scale(${currentZoom})`;
+    }
+  } else {
+    video.style.transform = `scale(${currentZoom})`;
+  }
+  document.getElementById('zoomIndicator').textContent = currentZoom.toFixed(1)+'×';
+  document.getElementById('zoomIndicator').classList.add('show');
+  document.getElementById('zoomLbl').textContent = currentZoom.toFixed(1)+'×';
+  document.getElementById('zoomRange').value = currentZoom;
+  updateZoomBtns();
+  clearTimeout(window._zoomHideT);
+  window._zoomHideT = setTimeout(()=>document.getElementById('zoomIndicator').classList.remove('show'),1500);
+}
+
+function onZoomSlider(v) { applyZoom(parseFloat(v)); }
+
+function setZoomQuick(z) { applyZoom(z); }
+
+function updateZoomBtns() {
+  document.querySelectorAll('.zoom-btn').forEach(b => {
+    const bz = parseFloat(b.textContent);
+    b.classList.toggle('active', Math.abs(bz - currentZoom) < 0.15);
+  });
+}
+
+function applyFilters() {
+  const b = brightness, c = contrast;
+  video.style.filter = `brightness(${1+b*0.3}) contrast(${c})`;
+}
+
+function onBright(v) {
+  brightness = parseFloat(v);
+  document.getElementById('brightLbl').textContent = parseFloat(v).toFixed(1);
+  applyFilters();
+}
+
+function onContrast(v) {
+  contrast = parseFloat(v);
+  document.getElementById('contrastLbl').textContent = parseFloat(v).toFixed(1);
+  applyFilters();
+}
+
+// PINCH TO ZOOM
+const vf = document.getElementById('viewfinder');
+vf.addEventListener('touchstart', e => {
+  if (e.touches.length===2) {
+    pinchDist0 = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    pinchZoom0 = currentZoom;
+    document.getElementById('pinchHint').classList.add('show');
+    setTimeout(()=>document.getElementById('pinchHint').classList.remove('show'),1000);
+  }
+}, {passive:true});
+vf.addEventListener('touchmove', e => {
+  if (e.touches.length===2 && pinchDist0) {
+    const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    applyZoom(pinchZoom0 * (d/pinchDist0));
+  }
+}, {passive:true});
+vf.addEventListener('touchend', () => { pinchDist0 = null; });
+
+// TAP TO FOCUS
+vf.addEventListener('click', e => {
+  if (e.touches?.length > 1) return;
+  const rect = vf.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const ring = document.getElementById('focusRing');
+  ring.style.left = x+'px'; ring.style.top = y+'px';
+  ring.style.display = 'block';
+  ring.classList.remove('locked');
+  setTimeout(()=>{ ring.classList.add('locked'); setTimeout(()=>ring.style.display='none',600); }, 400);
+  const track = stream?.getVideoTracks()[0];
+  if (track?.applyConstraints) {
+    const pw = (x/rect.width), ph = (y/rect.height);
+    track.applyConstraints({ advanced:[{ pointOfInterest:{x:pw,y:ph} }] }).catch(()=>{});
+  }
+});
+
+// GPS
+function startGPS() {
+  if (!navigator.geolocation) { toast('GPS not supported'); return; }
+  const dot = document.getElementById('gpsDot');
+  dot.className = 'searching';
+  navigator.geolocation.watchPosition(pos => {
+    dot.className = 'fixed';
+    document.getElementById('gpsLabel').textContent = 'GPS';
+    const lat = pos.coords.latitude, lng = pos.coords.longitude;
+    geoData = { lat, lng, accuracy: pos.coords.accuracy };
+    document.getElementById('geoCoords').textContent = `Lat ${lat.toFixed(6)}  Long ${lng.toFixed(6)}`;
+    updateMiniMap(lat, lng);
+    reverseGeocode(lat, lng);
+  }, err => {
+    dot.className = '';
+    dot.style.background = '#E53935';
+    document.getElementById('gpsLabel').textContent = 'NO GPS';
+  }, { enableHighAccuracy:true, timeout:20000, maximumAge:5000 });
+}
+
+function updateMiniMap(lat, lng) {
+  if (!settings.map) return;
+  const src = `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=${mapZoom}&size=144x144&markers=color:red%7C${lat},${lng}&style=feature:all|element:labels.icon|visibility:off`;
+  const tile = `https://tile.openstreetmap.org/${mapZoom}/${lonToTile(lng,mapZoom)}/${latToTile(lat,mapZoom)}.png`;
+  document.getElementById('mapImg').src = tile;
+}
+
+function lonToTile(lon,z){return Math.floor((lon+180)/360*Math.pow(2,z));}
+function latToTile(lat,z){return Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));}
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+    const d = await r.json();
+    const city = d.address.city || d.address.town || d.address.village || d.address.county || '';
+    const state = d.address.state || '';
+    const country = d.address.country || '';
+    const road = d.address.road ? d.address.road+', ' : '';
+    const postcode = d.address.postcode || '';
+    document.getElementById('geoCity').innerHTML = `${city}, ${state} <span id="geoFlag"></span>`;
+    document.getElementById('geoAddr').textContent = `${road}${city}, ${state} ${postcode}, ${country}`;
+    geoData.city = city; geoData.state = state; geoData.country = country;
+    geoData.fullAddr = d.display_name;
+  } catch(e) {}
+}
+
+function startClock() {
+  function tick() {
+    const now = new Date();
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const d = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+    const h = now.getHours().toString().padStart(2,'0');
+    const m = now.getMinutes().toString().padStart(2,'0');
+    const s = now.getSeconds().toString().padStart(2,'0');
+    const offset = -now.getTimezoneOffset()/60;
+    const tz = `GMT${offset>=0?'+':''}${offset}:00`;
+    document.getElementById('geoTime').textContent = `${d}  ${h}:${m}:${s} ${tz}`;
+  }
+  tick(); clockInterval = setInterval(tick, 1000);
+}
+
+// CAPTURE
+function setMode(m) {
+  captureMode = m;
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('modeBadge').textContent = m.toUpperCase();
+  const shutter = document.getElementById('shutter');
+  if (m==='video') { shutter.classList.add('video'); }
+  else { shutter.classList.remove('video','recording'); }
+}
+
+function captureAction() {
+  if (captureMode==='photo') capturePhoto();
+  else if (captureMode==='video') toggleVideo();
+  else if (captureMode==='burst') captureBurst();
+  else if (captureMode==='timer') captureTimer();
+}
+
+function capturePhoto() {
+  flashEffect();
+  renderCapture((dataURL) => {
+    saveCapture(dataURL, 'image');
+  });
+}
+
+function flashEffect() {
+  const f = document.getElementById('flash');
+  f.style.opacity = '1';
+  setTimeout(()=>f.style.opacity='0', 80);
+}
+
+function renderCapture(cb) {
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  canvas.width = vw; canvas.height = vh;
+  // Apply filter
+  ctx.filter = `brightness(${1+brightness*0.3}) contrast(${contrast})`;
+  // Zoom crop
+  if (currentZoom > 1) {
+    const cw = vw/currentZoom, ch = vh/currentZoom;
+    const cx = (vw-cw)/2, cy = (vh-ch)/2;
+    ctx.drawImage(video, cx, cy, cw, ch, 0, 0, vw, vh);
+  } else {
+    ctx.drawImage(video, 0, 0, vw, vh);
+  }
+  ctx.filter = 'none';
+  if (settings.geo && geoData) drawGeoOverlay(ctx, vw, vh);
+  cb(canvas.toDataURL('image/jpeg', 0.92));
+}
+
+function drawGeoOverlay(ctx, w, h) {
+  const geo = geoData;
+  if (!geo) return;
+  const scale = w / 390;
+  const padX = 14*scale, padY = 14*scale;
+  const blockH = 90*scale;
+  const y0 = h - blockH - padY;
+
+  // Gradient bg
+  const grad = ctx.createLinearGradient(0, y0-20*scale, 0, h);
+  grad.addColorStop(0,'rgba(0,0,0,0)');
+  grad.addColorStop(1,'rgba(0,0,0,0.87)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, y0-20*scale, w, h-(y0-20*scale));
+
+  // Mini map box
+  if (settings.map) {
+    ctx.strokeStyle='rgba(255,255,255,0.4)';
+    ctx.lineWidth=1.5*scale;
+    ctx.beginPath();
+    ctx.roundRect(padX, y0, 72*scale, 72*scale, 6*scale);
+    ctx.stroke();
+    ctx.fillStyle='rgba(26,42,26,0.6)';
+    ctx.fill();
+    // Map icon
+    ctx.fillStyle='rgba(0,229,255,0.8)';
+    ctx.font=`bold ${20*scale}px sans-serif`;
+    ctx.textAlign='center';
+    ctx.fillText('📍', padX+36*scale, y0+44*scale);
+  }
+
+  const tx = (settings.map ? padX+80*scale : padX);
+  // City
+  ctx.fillStyle='#FFFFFF';
+  ctx.font=`bold ${17*scale}px Rajdhani,sans-serif`;
+  ctx.textAlign='left';
+  const city = geo.city ? `${geo.city}, ${geo.state||geo.country||''}` : 'Location';
+  ctx.fillText(city.substring(0,30), tx, y0+18*scale);
+  // Address
+  if (geo.fullAddr) {
+    ctx.fillStyle='rgba(255,255,255,0.75)';
+    ctx.font=`${11*scale}px JetBrains Mono,monospace`;
+    const addr = geo.fullAddr.substring(0,45);
+    ctx.fillText(addr, tx, y0+34*scale);
+  }
+  // Coords
+  if (settings.coords) {
+    ctx.fillStyle='#00E5FF';
+    ctx.font=`${10*scale}px JetBrains Mono,monospace`;
+    ctx.fillText(`Lat ${geo.lat.toFixed(6)}  Long ${geo.lng.toFixed(6)}`, tx, y0+50*scale);
+  }
+  // Timestamp
+  const now = new Date();
+  const ts = now.toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+ ' IST';
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.font=`${10*scale}px JetBrains Mono,monospace`;
+  ctx.fillText(ts, tx, y0+64*scale);
+
+  // Watermark
+  ctx.fillStyle='rgba(255,255,255,0.25)';
+  ctx.font=`bold ${10*scale}px Rajdhani,sans-serif`;
+  ctx.textAlign='right';
+  ctx.fillText('GeoTag Cam Pro', w-padX, h-8*scale);
+}
+
+function saveCapture(dataURL, type) {
+  const item = { dataURL, type, time: new Date().toISOString(), geo: geoData ? {...geoData} : null };
+  captured.unshift(item);
+  updateGalleryThumb();
+  toast(type==='image' ? '📸 Photo saved' : '🎬 Video saved');
+}
+
+function updateGalleryThumb() {
+  if (captured.length===0) return;
+  const latest = captured[0];
+  const thumb = document.getElementById('galleryThumb');
+  const empty = document.getElementById('galleryEmpty');
+  const count = document.getElementById('galleryCount');
+  if (latest.type==='image') thumb.src = latest.dataURL;
+  thumb.style.display='block'; empty.style.display='none';
+  count.textContent = captured.length;
+  count.style.display='block';
+}
+
+function captureBurst() {
+  toast('📸 Burst: 5 shots');
+  let i = 0;
+  const interval = setInterval(()=>{
+    flashEffect();
+    renderCapture(d=>saveCapture(d,'image'));
+    i++;
+    if (i>=5) clearInterval(interval);
+  }, 250);
+}
+
+function captureTimer() {
+  const delay = parseInt(document.getElementById('timerSelect').value)*1000;
+  let t = delay/1000;
+  toast(`⏱ ${t}s…`);
+  timerTimeout = setTimeout(()=>{
+    capturePhoto();
+  }, delay);
+}
+
+function toggleVideo() {
+  if (!mediaRecorder || mediaRecorder.state==='inactive') startRecording();
+  else stopRecording();
+}
+
+async function startRecording() {
+  recordedChunks = [];
+  const audioStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  const combined = new MediaStream([...stream.getVideoTracks(), ...audioStream.getAudioTracks()]);
+  mediaRecorder = new MediaRecorder(combined, { mimeType: getSupportedMime() });
+  mediaRecorder.ondataavailable = e => { if(e.data.size>0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = ()=>{
+    const blob = new Blob(recordedChunks, {type:'video/webm'});
+    const url = URL.createObjectURL(blob);
+    saveCapture(url,'video');
+    audioStream.getTracks().forEach(t=>t.stop());
+  };
+  mediaRecorder.start(100);
+  recSeconds = 0;
+  document.getElementById('recIndicator').style.display='flex';
+  document.getElementById('shutter').classList.add('recording');
+  recInterval = setInterval(()=>{
+    recSeconds++;
+    const m = String(Math.floor(recSeconds/60)).padStart(2,'0');
+    const s = String(recSeconds%60).padStart(2,'0');
+    document.getElementById('recTime').textContent = m+':'+s;
+  },1000);
+}
+
+function stopRecording() {
+  if(mediaRecorder) mediaRecorder.stop();
+  clearInterval(recInterval);
+  document.getElementById('recIndicator').style.display='none';
+  document.getElementById('shutter').classList.remove('recording');
+}
+
+function getSupportedMime() {
+  const types = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
+  for(const t of types) if(MediaRecorder.isTypeSupported(t)) return t;
+  return '';
+}
+
+// GALLERY
+function openGallery() {
+  const modal = document.getElementById('galleryModal');
+  const grid = document.getElementById('galleryGrid');
+  modal.classList.add('open');
+  grid.innerHTML = '';
+  captured.forEach((item,i)=>{
+    const div = document.createElement('div');
+    div.className='gallery-item';
+    if(item.type==='image'){
+      const img=document.createElement('img'); img.src=item.dataURL; div.appendChild(img);
+    } else {
+      const vid=document.createElement('video'); vid.src=item.dataURL; div.appendChild(vid);
+      const badge=document.createElement('div'); badge.className='vid-badge'; badge.textContent='VID'; div.appendChild(badge);
+    }
+    div.onclick=()=>openLightbox(i);
+    grid.appendChild(div);
+  });
+}
+
+function closeGallery() { document.getElementById('galleryModal').classList.remove('open'); }
+
+function openLightbox(i) {
+  activeIndex = i;
+  const item = captured[i];
+  const lb = document.getElementById('lightbox');
+  lb.classList.add('open');
+  const img = document.getElementById('lbImg');
+  const vid = document.getElementById('lbVideo');
+  if(item.type==='image'){
+    img.src=item.dataURL; img.style.display='block'; vid.style.display='none';
+  } else {
+    vid.src=item.dataURL; vid.style.display='block'; img.style.display='none';
+  }
+}
+
+function closeLightbox() { document.getElementById('lightbox').classList.remove('open'); }
+
+function deleteItem() {
+  if(activeIndex>=0){ captured.splice(activeIndex,1); closeLightbox(); openGallery(); updateGalleryThumb(); }
+}
+
+function downloadItem() {
+  if(activeIndex<0) return;
+  const item=captured[activeIndex];
+  const a=document.createElement('a');
+  a.href=item.dataURL;
+  a.download=`GeoTagCam_${new Date().toISOString().replace(/[:.]/g,'-')}.${item.type==='image'?'jpg':'webm'}`;
+  a.click();
+}
+
+// SETTINGS
+function togglePanel(){
+  document.getElementById('panel').classList.toggle('open');
+  document.getElementById('settingsBtn').classList.toggle('active');
+}
+
+function toggleGrid(){
+  settings.grid=!settings.grid;
+  document.getElementById('tGrid').classList.toggle('on',settings.grid);
+  document.getElementById('grid').style.display=settings.grid?'block':'none';
+}
+function toggleGeo(){
+  settings.geo=!settings.geo;
+  document.getElementById('tGeo').classList.toggle('on',settings.geo);
+  document.getElementById('geoPreview').style.display=settings.geo?'block':'none';
+}
+function toggleCoords(){
+  settings.coords=!settings.coords;
+  document.getElementById('tCoords').classList.toggle('on',settings.coords);
+  document.getElementById('geoCoords').style.display=settings.coords?'block':'none';
+}
+function toggleMap(){
+  settings.map=!settings.map;
+  document.getElementById('tMap').classList.toggle('on',settings.map);
+  document.getElementById('miniMap').style.display=settings.map?'block':'none';
+}
+function toggleSound(){ settings.sound=!settings.sound; document.getElementById('tSound').classList.toggle('on',settings.sound); }
+function toggleSaveGeo(){ settings.saveGeo=!settings.saveGeo; document.getElementById('tSaveGeo').classList.toggle('on',settings.saveGeo); }
+function changeRes(){ startCamera(true); toast('Camera restarting…'); }
+
+// TOAST
+let toastT;
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),2200);
+}
+
+// Prevent scroll bounce
+document.body.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+</script>
+</body>
+</html>
